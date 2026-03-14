@@ -6,6 +6,14 @@ from google import genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
+# --- 1. CONFIGURACIÓN DE LOGS (Agregado) ---
+# Esto te mostrará en la terminal si el bot recibe mensajes o tiene errores de red
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
 # Importamos la lógica de lectura universal desde tu otro archivo
 try:
     from asistente import leer_archivo_universal
@@ -26,7 +34,11 @@ client = genai.Client(api_key=GEMINI_KEY)
 async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Seguridad: Solo responde si el ID coincide
     user_id_actual = str(update.effective_user.id)
-    if user_id_actual != USER_ID:
+    
+    # Log para saber quién está escribiendo en tiempo real
+    logger.info(f"Mensaje recibido de ID: {user_id_actual}")
+
+    if user_id_actual != str(USER_ID):
         await update.message.reply_text(" No tienes permiso para usar este asistente.")
         return
 
@@ -35,15 +47,12 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         doc = update.message.document
         nombre_archivo = doc.file_name
         
-        # Feedback al usuario
         await update.message.reply_text(f" Recibido: {nombre_archivo}. Procesando...")
         
-        # Descargar el archivo
         archivo_tg = await context.bot.get_file(doc.file_id)
         ruta_local = os.path.join(os.getcwd(), nombre_archivo)
         await archivo_tg.download_to_drive(ruta_local)
         
-        # Leer contenido usando la función universal
         contenido = leer_archivo_universal(ruta_local)
         
         if contenido and not contenido.startswith("Error"):
@@ -52,12 +61,10 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f" No pude leer el archivo: {contenido}")
             return
     
-    # Si el usuario envía TEXTO
     else:
         prompt = update.message.text
 
     try:
-        # Acción visual de "escribiendo..."
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         
         # Generar respuesta con la IA (Gemma 3)
@@ -68,15 +75,16 @@ async def manejar_mensaje(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(response.text)
         
     except Exception as e:
+        logger.error(f"Error en la IA: {e}")
         await update.message.reply_text(f" Error en la IA: {e}")
 
 if __name__ == '__main__':
+    print("\n" + "="*30)
     print("--- INICIANDO BIT ASISTENTE ---")
+    print("="*30 + "\n")
     
-    # Verificación de Tokens antes de arrancar
     if not TOKEN or ":" not in TOKEN:
         print(f" ERROR: El Token de Telegram no es válido o está incompleto en el .env")
-        print(f"Token detectado: {TOKEN}")
         sys.exit(1)
         
     if not USER_ID:
@@ -84,14 +92,12 @@ if __name__ == '__main__':
         sys.exit(1)
 
     try:
-        # Construir la aplicación
         app = ApplicationBuilder().token(TOKEN).build()
-        
-        # Añadir el manejador para cualquier mensaje (texto o documentos)
         app.add_handler(MessageHandler(filters.ALL, manejar_mensaje))
         
         print(f" CONECTADO EXITOSAMENTE")
-        print(f" Bit está escuchando en Telegram... (ID Autorizado: {USER_ID})")
+        print(f" Bit está escuchando... (ID Autorizado: {USER_ID})")
+        print(" Presiona Ctrl+C para detener el bot.\n")
         
         app.run_polling()
         
